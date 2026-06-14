@@ -1,14 +1,41 @@
-# astrbot-plugin-helloworld
+# DeepSeek 余额查询与报警插件 for AstrBot
 
-AstrBot 插件模板 / A template plugin for AstrBot plugin feature
+查询 DeepSeek API 账户余额，支持图片卡片展示、多 Key 轮询、白名单管理和余额不足自动报警。
 
-> [!NOTE]
-> This repo is just a template of [AstrBot](https://github.com/AstrBotDevs/AstrBot) Plugin.
-> 
-> [AstrBot](https://github.com/AstrBotDevs/AstrBot) is an agentic assistant for both personal and group conversations. It can be deployed across dozens of mainstream instant messaging platforms, including QQ, Telegram, Feishu, DingTalk, Slack, LINE, Discord, Matrix, etc. In addition, it provides a reliable and extensible conversational AI infrastructure for individuals, developers, and teams. Whether you need a personal AI companion, an intelligent customer support agent, an automation assistant, or an enterprise knowledge base, AstrBot enables you to quickly build AI applications directly within your existing messaging workflows.
+## 功能
 
-# Supports
+- `/余额` — 以图片卡片形式展示余额信息（默认）
+- `/余额 文字` — 以纯文本形式展示余额信息
+- `/白名单 列表` — 查看白名单用户
+- `/白名单 添加 <用户ID>` — 将用户加入白名单
+- `/白名单 移除 <用户ID>` — 将用户移出白名单
+- `/apikey 列表` — 查看所有 API Key（脱敏显示）
+- `/apikey 添加 <Key>` — 添加新的 API Key
+- `/apikey 移除 <索引>` — 按索引移除 API Key
+- 余额低于阈值时自动向指定目标发送报警消息
+- 图片渲染失败时自动降级为文字输出
 
-- [AstrBot Repo](https://github.com/AstrBotDevs/AstrBot)
-- [AstrBot Plugin Development Docs (Chinese)](https://docs.astrbot.app/dev/star/plugin-new.html)
-- [AstrBot Plugin Development Docs (English)](https://docs.astrbot.app/en/dev/star/plugin-new.html)
+## 配置
+
+1. 在 AstrBot 插件配置中填写 `deepseek_api_key`（主 API Key）
+2. 在「额外 API Key」列表中可添加多个 Key，实现轮询统计
+3. 在「白名单用户」列表中可管理允许使用插件的用户 ID（为空则允许所有用户）
+4. （可选）开启「启用余额不足报警」，设置报警阈值（元）
+5. （可选）设置「报警目标」，格式为 `private:QQ号`（私聊）或 `group:群号`（群聊），留空则仅在查询时显示报警
+6. 重启 AstrBot 或热加载插件
+
+## 依赖
+
+- aiohttp >= 3.8.0
+- Pillow >= 9.0.0
+
+## 注意
+
+- 图片模式需要中文字体支持。插件会依次尝试：本地缓存字体 → 系统已安装中文字体（fc-list 自动检测）→ 自动通过包管理器安装 → CDN 下载 → 默认字体兜底。
+- 如果服务器网络受限，可手动将 `NotoSansSC-Regular.otf` 放入插件目录下的 `fonts/` 文件夹。
+- 多 Key 模式下查询会自动轮询，每次查询使用下一个 Key。
+- DeepSeek 用量统计 API（`/user/usage`）当前不可用（返回 404），相关功能已移除。若该接口后续开放，可重新添加。
+
+---
+
+> **此插件 100% 由 AI 生成。**

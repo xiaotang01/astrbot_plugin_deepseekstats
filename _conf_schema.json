@@ -1,0 +1,45 @@
+{
+  "deepseek_api_key": {
+    "description": "主 DeepSeek API Key",
+    "type": "string",
+    "default": "",
+    "hint": {
+      "type": "password"
+    }
+  },
+  "extra_api_keys": {
+    "description": "额外 API Key，用于多 Key 轮询统计",
+    "type": "list",
+    "default": []
+  },
+  "whitelist_users": {
+    "description": "白名单用户 ID，为空则允许所有用户",
+    "type": "list",
+    "default": []
+  },
+  "whitelist_file": {
+    "description": "白名单文件路径",
+    "type": "string",
+    "default": "data/whitelist.txt"
+  },
+  "keys_file": {
+    "description": "多 API Key 存储文件路径",
+    "type": "string",
+    "default": "data/deepseek_keys.json"
+  },
+  "alarm_enabled": {
+    "description": "启用余额不足报警",
+    "type": "bool",
+    "default": false
+  },
+  "alarm_threshold": {
+    "description": "报警阈值（元），余额低于此值时触发",
+    "type": "float",
+    "default": 10.0
+  },
+  "alarm_target": {
+    "description": "报警目标，格式: private:QQ号 或 group:群号",
+    "type": "string",
+    "default": ""
+  }
+}
