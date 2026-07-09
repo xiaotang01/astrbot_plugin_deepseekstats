@@ -127,3 +127,19 @@ class ConfigManager:
     def get_alarm_target(self) -> str:
         """返回报警目标，格式: private:QQ号 或 group:群号，空字符串=仅查询时显示"""
         return str(self._config.get("alarm_target", "")).strip()
+
+    def get_alarm_interval(self) -> int:
+        """后台检查间隔（秒），默认 300（5分钟）"""
+        val = self._config.get("alarm_interval", 300)
+        try:
+            return max(60, int(val))  # 最少 60 秒
+        except (ValueError, TypeError):
+            return 300
+
+    def get_alarm_cooldown(self) -> int:
+        """报警冷却时间（秒），默认 3600（1小时），防止重复报警"""
+        val = self._config.get("alarm_cooldown", 3600)
+        try:
+            return max(300, int(val))  # 最少 5 分钟
+        except (ValueError, TypeError):
+            return 3600

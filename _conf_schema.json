@@ -28,7 +28,7 @@
     "default": "data/deepseek_keys.json"
   },
   "alarm_enabled": {
-    "description": "启用余额不足报警",
+    "description": "启用余额不足报警（开启后将定时后台检查余额）",
     "type": "bool",
     "default": false
   },
@@ -41,5 +41,15 @@
     "description": "报警目标，格式: private:QQ号 或 group:群号",
     "type": "string",
     "default": ""
+  },
+  "alarm_interval": {
+    "description": "后台检查间隔（秒），最少60，默认300（5分钟）",
+    "type": "int",
+    "default": 300
+  },
+  "alarm_cooldown": {
+    "description": "报警冷却时间（秒），最少300，默认3600（1小时），避免重复报警",
+    "type": "int",
+    "default": 3600
   }
 }
