@@ -22,7 +22,7 @@
 2. 在「额外 API Key」列表中可添加多个 Key，实现轮询统计
 3. 在「白名单用户」列表中可管理允许使用插件的用户 ID（为空则允许所有用户）
 4. （可选）开启「启用余额不足报警」，设置报警阈值（元）
-5. （可选）设置「报警目标」，格式为 `private:QQ号`（私聊）或 `group:群号`（群聊），留空则仅在查询时显示报警
+5. （可选）设置「报警目标」，格式为 `private:QQ号`（私聊）或 `group:群号`（群聊），也可以直接填群号；留空则仅在查询时显示报警
 6. （可选）调整「后台检查间隔」（默认 300 秒）和「报警冷却时间」（默认 3600 秒）
 7. 重启 AstrBot 或热加载插件
 
@@ -35,7 +35,7 @@
 | `whitelist_users` | list | `[]` | 白名单用户 ID，为空则允许所有用户 |
 | `alarm_enabled` | bool | `false` | 是否启用余额不足报警 |
 | `alarm_threshold` | float | `10.0` | 报警阈值（元），余额低于此值时触发 |
-| `alarm_target` | string | `""` | 报警目标，格式 `private:QQ号` 或 `group:群号` |
+| `alarm_target` | string | `""` | 报警目标，格式 `private:QQ号`、`group:群号` 或直接填群号 |
 | `alarm_interval` | int | `300` | 后台检查间隔（秒），最少 60 |
 | `alarm_cooldown` | int | `3600` | 报警冷却时间（秒），最少 300 |
 
@@ -53,6 +53,9 @@
 
 - `private:QQ号` — 推送到指定 QQ 私聊
 - `group:群号` — 推送到指定 QQ 群
+- `群号` — 只填群号时按群聊处理
+- `平台ID:group:群号` / `平台ID:private:QQ号` — 指定特定平台实例（平台 ID 可在 WebUI 平台配置中查看）
+- `平台ID:GroupMessage:session_id` / `平台ID:FriendMessage:session_id` — AstrBot 原生会话格式
 
 ## 依赖
 

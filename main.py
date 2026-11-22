@@ -13,7 +13,7 @@ DeepSeek 余额查询插件主类
 
 import asyncio
 from datetime import datetime
-from astrbot.api.event import filter, AstrMessageEvent
+from astrbot.api.event import filter, AstrMessageEvent, MessageChain
 from astrbot.api.star import Context, Star, register
 from astrbot.api import AstrBotConfig, logger
 from astrbot.core.message.components import Image, Plain
@@ -33,9 +33,16 @@ from .draw import (
     "astrbot_plugin_deepseekstats",
     "DeepSeek余额查询与报警",
     "查询DeepSeek API余额，支持多Key轮询、白名单管理、余额不足自动报警。",
-    "v2.1.0",
+    "v2.1.1",
 )
 class DeepSeekBalancePlugin(Star):
+    _ALARM_TYPE_MAP = {
+        "group": "GroupMessage",
+        "groupmessage": "GroupMessage",
+        "private": "FriendMessage",
+        "friend": "FriendMessage",
+        "friendmessage": "FriendMessage",
+    }
 
     def __init__(self, context: Context, config: AstrBotConfig):
         super().__init__(context)
@@ -51,8 +58,6 @@ class DeepSeekBalancePlugin(Star):
         # ---- 报警后台任务相关 ----
         self._alarm_task = None
         self._last_alarm_times = {}  # {api_key: datetime} 冷却去重
-        self._alarm_interval = self._config_manager.get_alarm_interval()  # 检查间隔（秒）
-        self._alarm_cooldown = self._config_manager.get_alarm_cooldown()  # 冷却时间（秒）
 
     async def initialize(self):
         await self._api.initialize()
@@ -68,23 +73,24 @@ class DeepSeekBalancePlugin(Star):
             return
 
         alarm_target = self._config_manager.get_alarm_target()
-        if not alarm_target or ":" not in alarm_target:
+        _, err = self._parse_alarm_target(alarm_target)
+        if err:
             logger.warning(
-                "[DeepSeek] 报警已启用但 alarm_target 未配置或格式错误（应为 private:QQ号 或 group:群号），"
-                "后台监控不会启动"
+                f"[DeepSeek] 报警已启用但报警目标无效（{err}），"
+                "支持格式: group:群号 / private:QQ号 / 群号，后台监控不会启动"
             )
             return
 
         logger.info(
-            f"[DeepSeek] 启动后台余额监控: 间隔={self._alarm_interval}s, "
-            f"冷却={self._alarm_cooldown}s, 目标={alarm_target}"
+            f"[DeepSeek] 启动后台余额监控: 间隔={self._config_manager.get_alarm_interval()}s, "
+            f"冷却={self._config_manager.get_alarm_cooldown()}s, 目标={alarm_target}"
         )
         self._alarm_task = asyncio.ensure_future(self._alarm_monitor_loop())
 
     async def _alarm_monitor_loop(self):
         """后台循环：定时检查所有 Key 的余额，低于阈值时发送报警"""
         # 启动后先等一个间隔再检查，避免启动瞬间就报警
-        await asyncio.sleep(self._alarm_interval)
+        await asyncio.sleep(self._config_manager.get_alarm_interval())
 
         while True:
             try:
@@ -95,7 +101,8 @@ class DeepSeekBalancePlugin(Star):
             except Exception as e:
                 logger.error(f"[DeepSeek] 后台监控异常: {type(e).__name__}: {e}")
 
-            await asyncio.sleep(self._alarm_interval)
+            # 每轮重新读取间隔，配置页修改后无需重启即可生效
+            await asyncio.sleep(self._config_manager.get_alarm_interval())
 
     async def _check_all_keys_alarm(self):
         """遍历所有 API Key，检查余额并触发报警"""
@@ -116,28 +123,11 @@ class DeepSeekBalancePlugin(Star):
                 total = self._parser.get_total_balance(balance_data)
 
                 if total < threshold:
-                    # 检查冷却
-                    now = datetime.now()
-                    last_alarm = self._last_alarm_times.get(api_key)
-                    if last_alarm and (now - last_alarm).total_seconds() < self._alarm_cooldown:
-                        logger.debug(
-                            f"[DeepSeek] Key {api_key[:8]}**** 余额 ¥{total:.2f} < ¥{threshold:.2f}，"
-                            f"但在冷却期内，跳过报警"
+                    triggered, msg, _, _ = self._check_alarm(balance_data, api_key)
+                    if triggered and await self._push_alarm(api_key, msg, total, threshold):
+                        logger.warning(
+                            f"[DeepSeek] 已发送余额报警: Key={self._mask_key(api_key)}, 余额=¥{total:.2f}"
                         )
-                        continue
-
-                    # 触发报警
-                    masked = api_key[:8] + "****" if len(api_key) > 8 else "****"
-                    msg = (
-                        f"⚠️ DeepSeek 余额不足报警！\n"
-                        f"API Key: {masked}\n"
-                        f"当前余额: ¥{total:.2f}\n"
-                        f"报警阈值: ¥{threshold:.2f}\n"
-                        f"请尽快充值！"
-                    )
-                    logger.warning(f"[DeepSeek] 触发余额报警: Key={masked}, 余额=¥{total:.2f}")
-                    await self._send_alarm_to_target(msg)
-                    self._last_alarm_times[api_key] = now
                 else:
                     logger.debug(f"[DeepSeek] Key {api_key[:8]}**** 余额 ¥{total:.2f} 正常")
 
@@ -145,6 +135,23 @@ class DeepSeekBalancePlugin(Star):
                 logger.warning(f"[DeepSeek] 监控 Key {api_key[:8]}**** 查询失败: {e}")
             except Exception as e:
                 logger.error(f"[DeepSeek] 监控 Key {api_key[:8]}**** 异常: {type(e).__name__}: {e}")
+
+    async def _push_alarm(self, api_key: str, msg: str, total: float, threshold: float) -> bool:
+        """按冷却策略推送报警，只有发送成功才记录冷却时间"""
+        now = datetime.now()
+        last_alarm = self._last_alarm_times.get(api_key)
+        cooldown = self._config_manager.get_alarm_cooldown()
+        if last_alarm and (now - last_alarm).total_seconds() < cooldown:
+            logger.debug(
+                f"[DeepSeek] Key {self._mask_key(api_key)} 余额 ¥{total:.2f} < ¥{threshold:.2f}，"
+                f"但在冷却期内，跳过报警"
+            )
+            return False
+
+        if await self._send_alarm_to_target(msg):
+            self._last_alarm_times[api_key] = now
+            return True
+        return False
 
     # ==================== 工具方法 ====================
 
@@ -154,9 +161,14 @@ class DeepSeekBalancePlugin(Star):
     def _use_text_mode(self, event: AstrMessageEvent) -> bool:
         return "文字" in event.message_str
 
-    def _check_alarm(self, balance_data: dict) -> tuple:
+    @staticmethod
+    def _mask_key(api_key: str) -> str:
+        """脱敏展示 API Key"""
+        return api_key[:8] + "****" if len(api_key) > 8 else "****"
+
+    def _check_alarm(self, balance_data: dict, api_key: str = "") -> tuple:
         """
-        检查余额是否低于报警阈值（供 /余额 命令主动触发时使用）
+        检查余额是否低于报警阈值（/余额 命令与后台监控共用）
         返回: (触发报警: bool, 报警消息: str, 当前余额: float, 阈值: float)
         """
         if not self._config_manager.get_alarm_enabled():
@@ -169,77 +181,93 @@ class DeepSeekBalancePlugin(Star):
         total = self._parser.get_total_balance(balance_data)
 
         if total < threshold:
-            msg = (
-                f"⚠️ DeepSeek 余额不足报警！\n"
-                f"当前余额: ¥{total:.2f}\n"
-                f"报警阈值: ¥{threshold:.2f}\n"
-                f"请尽快充值！"
-            )
-            return True, msg, total, threshold
+            lines = ["⚠️ DeepSeek 余额不足报警！"]
+            if api_key:
+                lines.append(f"API Key: {self._mask_key(api_key)}")
+            lines.extend([
+                f"当前余额: ¥{total:.2f}",
+                f"报警阈值: ¥{threshold:.2f}",
+                "请尽快充值！",
+            ])
+            return True, "\n".join(lines), total, threshold
         return False, "", total, threshold
+
+    def _resolve_platform_id(self, platform_name: str = "aiocqhttp") -> str:
+        """从已加载的平台实例中解析出平台 ID，取不到时回退为平台名称"""
+        try:
+            for inst in self.context.platform_manager.platform_insts:
+                meta = inst.meta()
+                if getattr(meta, "name", "") == platform_name:
+                    return meta.id
+        except Exception as e:
+            logger.debug(f"[DeepSeek] 解析平台 ID 失败: {e}")
+        return platform_name
 
     def _parse_alarm_target(self, target: str) -> tuple:
         """
-        解析报警目标字符串
+        解析报警目标，返回 AstrBot 的 unified_msg_origin（platform:MessageType:session_id）
         支持格式:
-          - private:QQ号       -> session_id = aiocqhttp:private_QQ号
-          - group:群号          -> session_id = aiocqhttp:group_群号
-          - platform:type:id   -> session_id = platform:type_id  （扩展格式）
-        返回: (session_id, error_msg)
+          - group:群号                       -> aiocqhttp:GroupMessage:群号
+          - private:QQ号                     -> aiocqhttp:FriendMessage:QQ号
+          - 群号                              -> 按群聊处理
+          - platform:group:群号              -> platform:GroupMessage:群号
+          - platform:GroupMessage:session_id -> 原样使用
+        返回: (unified_msg_origin, error_msg)
         """
-        if not target or ":" not in target:
-            return "", "alarm_target 格式错误，应为 private:QQ号 或 group:群号"
+        target = (target or "").strip()
+        if not target:
+            return "", "alarm_target 未配置"
 
-        parts = target.split(":")
-        if len(parts) == 3:
-            # 扩展格式: platform:type:id
-            platform, target_type, target_id = parts
-        elif len(parts) == 2:
-            # 标准格式: type:id（默认平台 aiocqhttp）
-            platform = "aiocqhttp"
-            target_type, target_id = parts
+        # 只填了群号，按群聊处理
+        if target.isdigit():
+            target = f"group:{target}"
+
+        parts = [p.strip() for p in target.split(":")]
+        if len(parts) == 2:
+            platform = self._resolve_platform_id()
+            type_token, target_id = parts
+        elif len(parts) == 3:
+            platform, type_token, target_id = parts
+            platform = platform or self._resolve_platform_id()
         else:
-            return "", f"alarm_target 格式错误: {target}"
+            return "", f"alarm_target 格式错误: {target}（应为 group:群号 或 private:QQ号）"
 
-        target_type = target_type.strip().lower()
-        target_id = target_id.strip()
-        platform = platform.strip()
-
+        message_type = self._ALARM_TYPE_MAP.get(type_token.lower())
+        if not message_type:
+            return "", f"未知的报警目标类型: {type_token}，应为 group 或 private"
         if not target_id:
             return "", "alarm_target 中的目标 ID 为空"
 
-        if target_type == "private":
-            session_id = f"{platform}:private_{target_id}"
-        elif target_type == "group":
-            session_id = f"{platform}:group_{target_id}"
-        else:
-            return "", f"未知的报警目标类型: {target_type}，应为 private 或 group"
+        return f"{platform}:{message_type}:{target_id}", ""
 
-        return session_id, ""
-
-    async def _send_alarm_to_target(self, msg: str):
-        """向配置的报警目标主动发送消息"""
+    async def _send_alarm_to_target(self, msg: str) -> bool:
+        """向配置的报警目标主动发送消息，成功返回 True"""
         target = self._config_manager.get_alarm_target()
         if not target:
             logger.warning("[DeepSeek] 报警目标为空，无法发送")
-            return
+            return False
 
         session_id, err = self._parse_alarm_target(target)
         if err:
-            logger.warning(f"[DeepSeek] {err}")
-            return
+            logger.warning(f"[DeepSeek] 报警目标无效: {err}")
+            return False
 
         try:
-            chain = [Plain(text=msg)]
-            await self.context.send_message(session_id, chain)
+            chain = MessageChain([Plain(text=msg)])
+            sent = await self.context.send_message(session_id, chain)
+            if sent is False:
+                logger.error(
+                    f"[DeepSeek] 未找到与 {session_id} 匹配的平台实例，报警未发送"
+                )
+                return False
             logger.info(f"[DeepSeek] 报警消息已发送到 {session_id}")
-        except AttributeError:
-            logger.warning(
-                f"[DeepSeek] 当前 AstrBot 版本不支持主动发送（context.send_message 不存在），"
-                f"请升级 AstrBot 或检查 API"
-            )
+            return True
+        except ValueError as e:
+            logger.error(f"[DeepSeek] 报警会话不合法 {session_id}: {e}")
+            return False
         except Exception as e:
             logger.error(f"[DeepSeek] 发送报警到 {session_id} 失败: {type(e).__name__}: {e}")
+            return False
 
     # ==================== /余额（主命令） ====================
 
@@ -274,11 +302,11 @@ class DeepSeekBalancePlugin(Star):
             return
 
         # ---- 检查报警 ----
-        alarm_triggered, alarm_msg, total, threshold = self._check_alarm(balance_data)
+        alarm_triggered, alarm_msg, total, threshold = self._check_alarm(balance_data, api_key)
 
-        # 向配置目标主动发送报警（命令触发时也会发送一次）
+        # 向配置目标主动发送报警（与后台监控共用冷却策略）
         if alarm_triggered and alarm_msg:
-            await self._send_alarm_to_target(alarm_msg)
+            await self._push_alarm(api_key, alarm_msg, total, threshold)
 
         # ---- 输出结果 ----
         if text_mode:

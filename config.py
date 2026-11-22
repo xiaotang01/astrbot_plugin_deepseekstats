@@ -49,8 +49,9 @@ class ConfigManager:
         ek_raw = self._config.get("extra_api_keys", [])
         self._sync_keys_from_config(ek_raw)
 
-        primary_key = self._config.get("deepseek_api_key", "")
-        if primary_key and self._key_manager.count() == 0:
+        primary_key = str(self._config.get("deepseek_api_key", "")).strip()
+        if primary_key:
+            # 主 Key 始终纳入 Key 管理器，确保后台监控也会检查它
             self._key_manager.add_key(primary_key)
 
     def _sync_whitelist_from_config(self, raw):
