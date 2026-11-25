@@ -1,6 +1,6 @@
 """
 DeepSeek 余额查询插件主类
-命令: /余额(查询)  /白名单  /apikey
+命令: /余额  /白名单  /apikey
 默认图片输出，图片失败降级文字，余额不足自动报警
 
 修复内容:
@@ -33,7 +33,7 @@ from .draw import (
     "astrbot_plugin_deepseekstats",
     "DeepSeek余额查询与报警",
     "查询DeepSeek API余额，支持多Key轮询、白名单管理、余额不足自动报警。",
-    "v2.1.1",
+    "v2.1.2",
 )
 class DeepSeekBalancePlugin(Star):
     _ALARM_TYPE_MAP = {
@@ -343,14 +343,6 @@ class DeepSeekBalancePlugin(Star):
                     parts.append("")
                 parts.append(self._parser.parse_balance_data(balance_data))
                 yield event.plain_result("\n".join(parts))
-
-    # ==================== /查询（兼容别名） ====================
-
-    @filter.command("查询")
-    async def query_alias(self, event: AstrMessageEvent):
-        """兼容旧命令，转发到 /余额"""
-        async for result in self.query_balance(event):
-            yield result
 
     # ==================== /白名单 ====================
 
